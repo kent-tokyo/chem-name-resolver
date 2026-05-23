@@ -1,0 +1,46 @@
+[package]
+name = "chem-name-resolver"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Pure-Rust IUPAC chemical name resolver → SMILES / molecular graph. WASM-compatible."
+license = "MIT OR Apache-2.0"
+keywords = ["chemistry", "iupac", "smiles", "cheminformatics", "wasm"]
+categories = ["science", "parsing", "text-processing"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
+python = ["dep:pyo3"]
+
+[dependencies]
+winnow = "0.6"
+unicode-segmentation = "1"
+phf = { version = "0.11", features = ["macros"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+wasm-bindgen = { version = "0.2", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bin]]
+name = "chem"
+path = "src/bin/chem.rs"
+
+[[bench]]
+name = "resolver_bench"
+harness = false
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
