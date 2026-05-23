@@ -7,6 +7,9 @@ description = "Pure-Rust IUPAC chemical name resolver → SMILES / molecular gra
 license = "MIT OR Apache-2.0"
 keywords = ["chemistry", "iupac", "smiles", "cheminformatics", "wasm"]
 categories = ["science", "parsing", "text-processing"]
+repository = "https://github.com/kent-tokyo/chem-name-resolver"
+documentation = "https://docs.rs/chem-name-resolver"
+readme = "README.md"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
