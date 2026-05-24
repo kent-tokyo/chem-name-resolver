@@ -1,18 +1,48 @@
+//! In-memory synonym dictionaries backed by compile-time perfect hash maps.
+//!
+//! Contains ~200 entries covering common trivial names, lab abbreviations,
+//! Japanese Katakana, and Chinese Hanzi for frequent molecules.
+//!
+//! Look-up is O(1) and allocation-free. All keys are stored lowercase.
+
 mod synonyms;
 mod word_map;
 
 use crate::normalizer;
 
+/// A dictionary entry: either a canonical IUPAC name or a pre-computed SMILES.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DictEntry<'a> {
     /// Canonical IUPAC name (may differ from input by synonym expansion).
+    /// The resolver will parse this name with the IUPAC parser to get SMILES.
     CanonicalName(&'a str),
-    /// Pre-computed SMILES for names too complex for the IUPAC parser.
+    /// Pre-computed SMILES for structures too complex for the rule-based IUPAC parser
+    /// (e.g. aromatic compounds, branched chains, polyfunctional molecules).
     DirectSmiles(&'a str),
 }
 
-/// Normalize input, then look up in synonym and katakana maps.
-/// Returns None if the name is not in the dictionary (caller should try parser).
+/// Look up a chemical name in all synonym dictionaries.
+///
+/// The name is normalized and lowercased before lookup. Returns `None` if the
+/// name is not found in any map; callers should then try the IUPAC parser.
+///
+/// # Lookup order
+///
+/// 1. `SYNONYM_TO_IUPAC` — trivial → systematic IUPAC
+/// 2. `SYNONYM_TO_SMILES` — trivial → direct SMILES
+/// 3. `KATAKANA_TO_IUPAC` — Japanese katakana names
+/// 4. `HANZI_TO_IUPAC` — Chinese hanzi names
+/// 5. `HANZI_TO_SMILES` — Chinese hanzi → direct SMILES
+///
+/// # Examples
+///
+/// ```rust
+/// use chem_name_resolver::dict::{lookup_synonym, DictEntry};
+///
+/// assert!(matches!(lookup_synonym("benzene"), Some(DictEntry::DirectSmiles(_))));
+/// assert!(matches!(lookup_synonym("acetone"), Some(DictEntry::CanonicalName(_))));
+/// assert!(lookup_synonym("xyzzy_unknown").is_none());
+/// ```
 pub fn lookup_synonym(name: &str) -> Option<DictEntry<'static>> {
     let normalized = normalizer::normalize_lowercase(name);
     let key: &str = &normalized;

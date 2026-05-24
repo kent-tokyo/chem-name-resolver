@@ -1,6 +1,6 @@
 [package]
 name = "chem-name-resolver"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Pure-Rust IUPAC chemical name resolver → SMILES / molecular graph. WASM-compatible."
@@ -26,6 +26,7 @@ phf = { version = "0.11", features = ["macros"] }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false, features = ["force-soft"] }
 wasm-bindgen = { version = "0.2", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }

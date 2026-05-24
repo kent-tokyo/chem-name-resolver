@@ -1,6 +1,26 @@
+//! IUPAC systematic name parser and molecular graph representation.
+//!
+//! # MVP scope
+//! - Straight-chain and monocyclic C1-C20 hydrocarbons
+//! - Functional group suffixes: `-ane`, `-ene`, `-yne`, `-ol`, `-one`, `-al`,
+//!   `-oic acid`, `-amide`, `-amine`, `-thiol`, `-nitrile`
+//! - Prefix substituents: halogens, short alkyl groups, `hydroxy`, `amino`,
+//!   `mercapto`, `cyano`, `acetyl`, `formyl`
+//! - Multiplier prefixes: `di-`, `tri-`, `tetra-`
+//!
+//! # Key types
+//! - [`MolGraph`] — molecular graph (atoms + bond adjacency lists)
+//! - [`parse_iupac`] — IUPAC name → MolGraph
+//! - [`smiles::to_smiles`] — MolGraph → canonical SMILES
+//! - [`formula::molecular_formula`] — MolGraph → Hill notation formula
+//! - [`inchi::mol_to_inchi`] — MolGraph → Standard InChI
+
 pub mod formula;
+pub mod inchi;
 pub mod scanner;
 pub mod smiles;
+pub mod smiles_parser;
+pub mod iupac_namer;
 
 mod alkane;
 mod locant;
@@ -13,17 +33,28 @@ use substituent::parse_substituents;
 
 // ── Molecular graph types ─────────────────────────────────────────────────────
 
+/// Chemical element supported by this library.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Element {
+    /// Carbon
     C,
+    /// Hydrogen
     H,
+    /// Oxygen
     O,
+    /// Nitrogen
     N,
+    /// Sulfur
     S,
+    /// Phosphorus
     P,
+    /// Fluorine
     F,
+    /// Chlorine
     Cl,
+    /// Bromine
     Br,
+    /// Iodine
     I,
 }
 
@@ -53,10 +84,14 @@ impl Element {
     }
 }
 
+/// Chemical bond order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BondOrder {
+    /// Single bond (degree 1)
     Single,
+    /// Double bond (degree 2)
     Double,
+    /// Triple bond (degree 3)
     Triple,
 }
 
@@ -70,16 +105,26 @@ impl BondOrder {
     }
 }
 
+/// An atom in the molecular graph.
 #[derive(Debug, Clone)]
 pub struct Atom {
+    /// Element type.
     pub element: Element,
+    /// Formal charge (0 for uncharged atoms).
     pub charge: i8,
+    /// Number of implicit (unlisted) hydrogen atoms on this atom.
     pub implicit_h: u8,
 }
 
+/// A directed bond from one atom to another.
+///
+/// Bonds are stored symmetrically — both `bonds[a]` and `bonds[b]` contain entries
+/// for any bond between atoms `a` and `b`.
 #[derive(Debug, Clone)]
 pub struct Bond {
+    /// Index of the atom at the other end of this bond.
     pub to: usize,
+    /// Bond order (Single, Double, or Triple).
     pub order: BondOrder,
 }
 

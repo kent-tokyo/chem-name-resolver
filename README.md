@@ -1,6 +1,6 @@
 # chem-name-resolver
 
-A pure-Rust library for resolving IUPAC chemical names to SMILES strings and molecular graphs. The Rust equivalent of Java's [OPSIN](https://opsin.ch.cam.ac.uk/), with WebAssembly support.
+A pure-Rust library for resolving IUPAC chemical names to SMILES strings, IUPAC names, InChI identifiers, and molecular properties. The Rust equivalent of Java's [OPSIN](https://opsin.ch.cam.ac.uk/), with WebAssembly support.
 
 ## Why chem-name-resolver?
 
@@ -13,12 +13,13 @@ Converting an IUPAC name like `"2,4-pentanedione"` to its SMILES representation 
 | Offline | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | △ | ✓ | **✓** |
 | CJK names | ✗ | ✗ | ✗ | ✗ | ✗ | △ | ✗ | ✗ | ✗ | **✓** |
 | IUPAC Parser | ✓ (best) | ✗ | ✗ | ✗ | ✗ | Lookup | ✗ | ✓ (neural) | ✗ | **✓** |
+| Reverse (SMILES→IUPAC) | ✗ | △ | △ | ✗ | ✗ | △ | ✗ | ✓ (neural) | ✗ | **✓** |
 | License | MIT | BSD-3 | GPL-2 | LGPL-2.1 | Apache-2 | Public domain | BSD | MIT | MIT | **MIT/Apache-2** |
 | Notes | JVM required | ~50 MB; C++ toolchain; rdkit-js WASM is subset | C++ FFI; copyleft; WASM experimental | JVM; IUPAC parsing delegates to OPSIN | Official WASM (npm); structure ops only | Network-dependent; 67M+ compounds | Thin REST wrapper | GPU recommended; non-deterministic; model ~GB | Dormant since 2020; incomplete SMILES | Pure Rust; no native deps |
 
 △ = partial / experimental
 
-**This library fills the gap**: a pure-Rust, WASM-compatible, offline IUPAC→SMILES engine with CJK support. It enables:
+**This library fills the gap**: a pure-Rust, WASM-compatible, offline IUPAC↔SMILES engine with CJK support. It enables:
 
 - **Browser-side chemistry** — ship a WASM module and resolve names client-side with zero server round-trips
 - **Rust-native tooling** — integrate into CLI tools, database indexers (e.g. [Cheminee](https://github.com/rdkit/Cheminee)), or Axum services without pulling in a JVM or C++ build
@@ -29,32 +30,46 @@ Converting an IUPAC name like `"2,4-pentanedione"` to its SMILES representation 
 
 - **Pure Rust** — no C/C++ dependencies (no RDKit, no Boost)
 - **WASM-compatible** — compiles to `wasm32-unknown-unknown`
-- **CJK support** — resolves Japanese katakana names (メタン, エタノール, …)
+- **CJK support** — resolves Japanese katakana names (メタン, エタノール, …) and Chinese hanzi (甲烷, 乙醇, …)
+- **Bidirectional**: IUPAC→SMILES (`resolve`) **and** SMILES→IUPAC (`smiles_to_iupac`)
+- **InChI/InChIKey** generation from SMILES
+- **Confidence score** — every result carries a `0.0–1.0` quality signal
 - **Zero-copy normalization** — returns `Cow::Borrowed` when input needs no changes
 - **JSON serialization** — `ResolveResult` implements `serde::Serialize`
 
 ## Quick Start
 
 ```rust
-use chem_name_resolver::resolve;
+use chem_name_resolver::{resolve, smiles_to_iupac, smiles_to_inchi, smiles_to_inchikey};
 
-// Systematic IUPAC name
+// Systematic IUPAC name → SMILES
 let r = resolve("propan-2-one").unwrap();
 assert_eq!(r.smiles, "CC(=O)C");
 assert_eq!(r.molecular_formula.as_deref(), Some("C3H6O"));
 assert!((r.molecular_weight.unwrap() - 58.08).abs() < 0.01);
+assert_eq!(r.confidence, 0.85);              // parsed by IUPAC engine
+assert!(r.inchi.as_deref().unwrap().starts_with("InChI=1S/"));
+assert_eq!(r.inchi_key.as_deref().unwrap().len(), 27);
 
-// Trivial name
+// Trivial name (dictionary)
 let r = resolve("acetone").unwrap();
 assert_eq!(r.smiles, "CC(=O)C");
+assert_eq!(r.confidence, 0.95);              // canonical-name dict entry
 
 // Japanese katakana
 let r = resolve("メタン").unwrap();
 assert_eq!(r.smiles, "C");
+assert_eq!(r.confidence, 0.90);              // CJK input → normalized → dict
 
-// n- prefix
-let r = resolve("n-butane").unwrap();
-assert_eq!(r.smiles, "CCCC");
+// SMILES → IUPAC name
+assert_eq!(smiles_to_iupac("CCCCO").unwrap(), "butan-1-ol");
+assert_eq!(smiles_to_iupac("CC=CC").unwrap(), "but-2-ene");
+
+// InChI / InChIKey from SMILES
+let inchi = smiles_to_inchi("CCO").unwrap();
+assert!(inchi.starts_with("InChI=1S/C2H6O/"));
+let key = smiles_to_inchikey("CCO").unwrap();
+assert_eq!(key.len(), 27);
 
 // JSON output
 let json = serde_json::to_string(&r).unwrap();
@@ -88,6 +103,7 @@ let json = serde_json::to_string(&r).unwrap();
 | Cyclic compounds | cyclohexane, cyclohexanol, cyclohexanone, cyclopentane, cyclopropane, … |
 | Nitro compounds | nitromethane, nitroethane, nitrobenzene |
 | Katakana → IUPAC | メタン–デカン, エタノール, アセトン, ベンゼン, … |
+| Hanzi → IUPAC/SMILES | 甲烷, 乙醇, 丙酮, 苯, 水, 氯仿, … |
 
 ### IUPAC Parser
 
@@ -127,19 +143,51 @@ Multiplier prefixes `di-`, `tri-`, `tetra-` are supported for all suffixes.
 
 Multiplier prefixes `di-`, `tri-`, `tetra-` are supported (e.g. `2,3-dichlorobutane` → `CC(C(C)Cl)Cl`).
 
+### SMILES → IUPAC (`smiles_to_iupac`)
+
+Reverse conversion for straight-chain acyclic molecules. Supports the same functional groups as the IUPAC parser. Branched chains and cyclic/aromatic SMILES return an error.
+
+```rust
+smiles_to_iupac("CCCCO")  // → "butan-1-ol"
+smiles_to_iupac("CC=O")   // → "ethanal"
+smiles_to_iupac("CC#CC")  // → "but-2-yne"
+smiles_to_iupac("CC(C)CC") // → Err (branched)
+```
+
+### InChI / InChIKey
+
+```rust
+smiles_to_inchi("CCO")    // → "InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3"
+smiles_to_inchikey("CCO") // → "XXXXXXXXXXXXXX-XXXXXXXXXX-N" (27 chars)
+```
+
+> **Note**: the generated InChI uses a simplified canonical algorithm and may not match the IUPAC-standard InChI for all molecules.
+
 ### Output
 
 ```rust
 pub struct ResolveResult {
     pub smiles: String,
     pub canonical_name: String,
-    pub source: ResolveSource,           // Dictionary | Parser
+    pub source: ResolveSource,             // Dictionary | Parser
     pub molecular_formula: Option<String>, // Hill notation, e.g. "C2H6O"
     pub molecular_weight: Option<f64>,     // g/mol
+    pub confidence: f64,                   // 0.0..=1.0
+    pub inchi: Option<String>,             // Standard InChI string
+    pub inchi_key: Option<String>,         // 27-char InChIKey
 }
 ```
 
-`molecular_formula` and `molecular_weight` are `None` when resolved via `DirectSmiles` (e.g. benzene).
+`molecular_formula`, `molecular_weight`, `inchi`, and `inchi_key` are `None` when resolved via `DirectSmiles` (e.g. benzene, where no molecular graph is built).
+
+### Confidence scores
+
+| Scenario | Score |
+|----------|-------|
+| Exact DirectSmiles dict match | `1.00` |
+| Exact CanonicalName dict match | `0.95` |
+| Dict match after normalization (CJK, Greek, …) | `0.90` |
+| IUPAC systematic-name parser | `0.85` |
 
 ## Installation
 
@@ -154,8 +202,11 @@ serde_json = "1"
 ## Building & Testing
 
 ```bash
-# run all 75 tests
+# run all 133 tests
 cargo test
+
+# doctests only
+cargo test --doc
 
 # verify WASM build
 rustup target add wasm32-unknown-unknown
@@ -176,7 +227,9 @@ console.log(normalize_name("α-D-glucose"));     // "alpha-d-glucose"
 
 // Full result as JSON string
 const json = resolve_full("ethanol");
-// '{"smiles":"CCO","canonical_name":"ethanol","source":"Dictionary","molecular_formula":"C2H6O","molecular_weight":46.069}'
+// '{"smiles":"CCO","canonical_name":"ethanol","source":"Dictionary",
+//   "molecular_formula":"C2H6O","molecular_weight":46.069,
+//   "confidence":0.95,"inchi":"InChI=1S/C2H6O/...","inchi_key":"..."}'
 ```
 
 ## CLI Usage
@@ -190,7 +243,10 @@ chem resolve ethanol
 #   "canonical_name": "ethanol",
 #   "source": "Dictionary",
 #   "molecular_formula": "C2H6O",
-#   "molecular_weight": 46.069
+#   "molecular_weight": 46.069,
+#   "confidence": 0.95,
+#   "inchi": "InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3",
+#   "inchi_key": "XXXXXXXXXXXXXX-XXXXXXXXXX-N"
 # }
 
 chem resolve --smiles "propan-2-one"
@@ -201,6 +257,8 @@ chem resolve --smiles "propan-2-one"
 
 - Cyclic and aromatic compounds are not parsed (dictionary lookup only)
 - Stereochemistry (R/S, E/Z) is not supported
+- `smiles_to_iupac` supports straight-chain molecules only (branched → error)
+- The generated InChI/InChIKey may differ from the IUPAC-standard values
 
 ## Roadmap
 
@@ -210,6 +268,13 @@ chem resolve --smiles "propan-2-one"
 - [x] Chinese/kanji chemical name dictionary
 - [x] Canonical SMILES (subtree-signature DFS ordering)
 - [x] Python bindings (PyO3 / Maturin)
+- [x] Confidence score in `ResolveResult`
+- [x] SMILES → IUPAC reverse conversion (`smiles_to_iupac`)
+- [x] InChI / InChIKey generation (`smiles_to_inchi`, `smiles_to_inchikey`)
+- [x] Comprehensive API documentation + doctests
+- [ ] Branched chain support for `smiles_to_iupac`
+- [ ] Stereochemistry (R/S, E/Z)
+- [ ] Large-scale synonym dictionary (PubChem/ChEBI via `phf_codegen`)
 
 ## License
 

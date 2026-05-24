@@ -1,3 +1,14 @@
+//! Chemical name text normalizer (CJK-safe, zero-copy when already normalized).
+//!
+//! # Transformations (applied in order)
+//!
+//! 1. **CJK full-width ASCII** → half-width: `ａ` → `a`, `０` → `0`
+//! 2. **Katakana prolonged sound mark** → ASCII hyphen: `ー` → `-`
+//! 3. **Greek letters** → ASCII equivalents: `α` → `alpha`, `β` → `beta`
+//! 4. **Whitespace** → collapsed and trimmed
+//!
+//! Uses [`std::borrow::Cow`] to avoid allocation when the input is already normalized.
+
 mod fullwidth;
 mod greek;
 mod katakana;

@@ -1,4 +1,4 @@
-use chem_name_resolver::{resolve, resolve_batch};
+use chem_name_resolver::{resolve, resolve_batch, smiles_to_iupac, smiles_to_inchi, smiles_to_inchikey};
 use serde_json;
 
 const CORPUS: &[(&str, &str)] = &[
@@ -454,4 +454,106 @@ fn chinese_names() {
         let result = resolve(name).unwrap_or_else(|e| panic!("resolve({name:?}) failed: {e}"));
         assert_eq!(&result.smiles, expected, "SMILES mismatch for: {name}");
     }
+}
+
+// ── Confidence scores ─────────────────────────────────────────────────────────
+
+#[test]
+fn confidence_exact_dict_match() {
+    let r = resolve("benzene").unwrap();
+    assert_eq!(r.confidence, 1.0, "benzene confidence should be 1.0, got {}", r.confidence);
+    let r2 = resolve("water").unwrap();
+    assert_eq!(r2.confidence, 1.0, "water confidence should be 1.0");
+}
+
+#[test]
+fn confidence_parser_result() {
+    let r = resolve("hexane").unwrap();
+    assert!((r.confidence - 0.85).abs() < 1e-9,
+        "hexane confidence should be 0.85, got {}", r.confidence);
+}
+
+#[test]
+fn confidence_after_normalization() {
+    let r = resolve("メタン").unwrap();
+    assert!((r.confidence - 0.90).abs() < 1e-9,
+        "メタン confidence should be 0.90, got {}", r.confidence);
+}
+
+// ── SMILES → IUPAC ───────────────────────────────────────────────────────────
+
+#[test]
+fn smiles_to_iupac_alkanes() {
+    assert_eq!(smiles_to_iupac("C").unwrap(), "methane");
+    assert_eq!(smiles_to_iupac("CC").unwrap(), "ethane");
+    assert_eq!(smiles_to_iupac("CCC").unwrap(), "propane");
+    assert_eq!(smiles_to_iupac("CCCC").unwrap(), "butane");
+}
+
+#[test]
+fn smiles_to_iupac_functional_groups() {
+    assert_eq!(smiles_to_iupac("CCO").unwrap(), "ethan-1-ol");
+    assert_eq!(smiles_to_iupac("CCCO").unwrap(), "propan-1-ol");
+    assert_eq!(smiles_to_iupac("CC(=O)C").unwrap(), "propan-2-one");
+    assert_eq!(smiles_to_iupac("CC=O").unwrap(), "ethanal");
+    assert_eq!(smiles_to_iupac("CC(=O)O").unwrap(), "ethanoic acid");
+    assert_eq!(smiles_to_iupac("CC#N").unwrap(), "ethanenitrile");
+    assert_eq!(smiles_to_iupac("CC=CC").unwrap(), "but-2-ene");
+    assert_eq!(smiles_to_iupac("CC#CC").unwrap(), "but-2-yne");
+}
+
+#[test]
+fn smiles_to_iupac_branched_error() {
+    assert!(smiles_to_iupac("CC(C)CC").is_err(), "branched chain should error");
+}
+
+#[test]
+fn smiles_to_iupac_aromatic_error() {
+    assert!(smiles_to_iupac("c1ccccc1").is_err(), "aromatic SMILES should error");
+}
+
+// ── InChI / InChIKey ──────────────────────────────────────────────────────────
+
+#[test]
+fn inchi_prefix_correct() {
+    let inchi = smiles_to_inchi("CCO").unwrap();
+    assert!(inchi.starts_with("InChI=1S/C2H6O/"), "got: {inchi}");
+}
+
+#[test]
+fn inchikey_format_27_chars() {
+    let key = smiles_to_inchikey("CCO").unwrap();
+    assert_eq!(key.len(), 27, "InChIKey should be 27 chars, got: {key}");
+    let parts: Vec<&str> = key.split('-').collect();
+    assert_eq!(parts.len(), 3, "InChIKey should have 3 parts: {key}");
+    assert_eq!(parts[0].len(), 14);
+    assert_eq!(parts[1].len(), 10);
+    assert_eq!(parts[2].len(), 1);
+    assert!(key.chars().all(|c| c.is_ascii_uppercase() || c == '-'));
+    assert_eq!(parts[2], "N");
+}
+
+#[test]
+fn inchikey_different_molecules_differ() {
+    let k_ethanol = smiles_to_inchikey("CCO").unwrap();
+    let k_propane = smiles_to_inchikey("CCC").unwrap();
+    assert_ne!(k_ethanol, k_propane);
+}
+
+#[test]
+fn inchi_in_resolve_result() {
+    let r = resolve("propane").unwrap();
+    assert!(r.inchi.is_some(), "propane should have inchi");
+    assert!(r.inchi_key.is_some(), "propane should have inchi_key");
+    assert!(r.inchi.as_deref().unwrap().starts_with("InChI=1S/"));
+    assert_eq!(r.inchi_key.as_deref().unwrap().len(), 27);
+}
+
+#[test]
+fn resolve_result_serializable_with_new_fields() {
+    let result = resolve("propane").unwrap();
+    let json = serde_json::to_string(&result).expect("must be serializable");
+    assert!(json.contains("confidence"));
+    assert!(json.contains("inchi"));
+    assert!(json.contains("inchi_key"));
 }
